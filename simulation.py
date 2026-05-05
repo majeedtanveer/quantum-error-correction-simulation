@@ -69,12 +69,12 @@ def repetition_theory(p: float, d: int) -> float:
 
     Notes
     -----
-    This is equivalent to the upper tail of a Binomial(d, p) distribution:
-        P(logical error) = sum_{k = (d+1)//2}^{d} C(d, k) p^k (1-p)^(d-k)
+    This is equivalent to the upper tail of a Binomial(d, n) distribution:
+        P(logical error) = sum_{k = (n+1)//2}^{n} C(n, j) p^j (1-p)^(n-j)
     """
     return sum(
-        comb(d, k) * p**k * (1 - p)**(d - k)
-        for k in range((d + 1) // 2, d + 1)
+        comb(d, j) * p**j * (1 - p)**(d - j)
+        for j in range((d + 1) // 2, d + 1)
     )
 
 class CircuitBuilder(ABC):
@@ -104,12 +104,21 @@ class CircuitBuilder(ABC):
         pass
 
 
+#   TODO:
+#     - concantenation option (Shor's Code)
+#       - build with repetitioncodebuilder
+
 class RepetitionCodeBuilder(CircuitBuilder):
     """
     Builder for repetition code circuits.
 
-    Constructs a distance-`d` repetition code with bit-flip noise,
-    measurement, detector definitions, and a logical observable.
+    Constructs a `[d,1,d]` distance-`d` repetition code with bit-flip noise,
+    measurement, detector definitions, and a logical observable. 
+    The distance is related to the logical X_L Error.
+
+    TODO: 
+    - phase flip option
+
     """
 
     def build_circuit(self, distance, noise, logical_one=False):
