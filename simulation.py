@@ -121,15 +121,15 @@ class RepetitionCodeBuilder(CircuitBuilder):
 
     """
 
-    def build_circuit(self, distance, noise, logical_one=False):
+    def build_circuit(self, distance=3, noise={"x": 0.05}, logical_one=False):
         """
         Build a repetition code circuit.
 
         Parameters
         ----------
-        distance : int
+        distance : int, optional
             Code distance. Must be an odd integer ≥ 3.
-        noise : dict
+        noise : dict, optional
             Noise specification. Expected key:
             - "x": float
                 Probability of bit-flip (X) error per qubit.
