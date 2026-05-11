@@ -114,14 +114,12 @@ class RepetitionCodeBuilder(CircuitBuilder):
 
     Constructs a `[d,1,d]` distance-`d` repetition code with bit-flip noise,
     measurement, detector definitions, and a logical observable. 
-    The distance is related to the logical X_L Error.
-
-    TODO: 
-    - phase flip option
+    The distance is related to the logical X_L Error. For a phase flip code the phase_flip 
+    flag can be set to true. 
 
     """
 
-    def build_circuit(self, distance=3, noise={"x": 0.05}, logical_one=False):
+    def build_circuit(self, distance=3, noise={"x": 0.05}, logical_one=False, phase_flip=False):
         """
         Build a repetition code circuit.
 
@@ -135,6 +133,8 @@ class RepetitionCodeBuilder(CircuitBuilder):
                 Probability of bit-flip (X) error per qubit.
         logical_one : bool, optional
             If True, prepares the logical |1⟩ state instead of |0⟩.
+        phase_flip : bool, optional
+            If True, the phase-flip repetition code is built.
 
         Returns
         -------
@@ -156,12 +156,22 @@ class RepetitionCodeBuilder(CircuitBuilder):
         if logical_one:
             circuit.append("X", 0)
 
-        for d in range(1, distance):
-            circuit.append("CNOT", [0, d])
+        if phase_flip:
+            circuit.append("H", list(range(distance)))
+            gate_error = "Z_ERROR"
+            measurement = "MX"
+            for d in range(1, distance):
+                circuit.append("CNOT", [d, 0])
+        else:
+            gate_error = "X_ERROR"
+            measurement = "M"
+            for d in range(1, distance):
+                circuit.append("CNOT", [0, d])
 
-        circuit.append("X_ERROR", list(range(distance)), noise["x"])
 
-        circuit.append("M", list(range(distance)))
+        circuit.append(gate_error, list(range(distance)), noise[gate_error])
+
+        circuit.append(measurement, list(range(distance)))
         for d in range(1, distance):
             circuit.append(
                 "DETECTOR",
@@ -220,6 +230,9 @@ class SinisterSimulation:
         """
         Generate simulation tasks for all parameter combinations.
 
+        # TODO:
+        Check if correct circuit paramters are used
+
         Returns
         -------
         List[sinter.Task]
@@ -229,7 +242,7 @@ class SinisterSimulation:
             sinter.Task(
                 circuit=self.circuit_builder.build_circuit(
                     distance=d,
-                    noise={"x": p},
+                    noise={"X_ERROR": p, "Z_ERROR": p},
                 ),
                 json_metadata={"d": d, "p": p},
             )

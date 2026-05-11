@@ -34,6 +34,7 @@ def test_3():
         dem = circuit.detector_error_model()
     err = dem.shortest_graphlike_error()
     distance = len(err)
+    # Short Comment about fault distance and stim detectors
 
     assert distance == d
 
