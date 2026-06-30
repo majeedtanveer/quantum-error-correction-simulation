@@ -1,6 +1,5 @@
 import stim, pymatching
 from abc import ABC, abstractmethod
-import sinter
 import numpy as np
 import matplotlib.pyplot as plt
 from math import comb
@@ -119,7 +118,7 @@ class RepetitionCodeBuilder(CircuitBuilder):
 
     """
 
-    def build_circuit(self, distance=3, noise={"x": 0.05}, logical_one=False, phase_flip=False):
+    def build_circuit(self, distance=3, noise={"X_ERROR": 0.05}, logical_one=False, phase_flip=False):
         """
         Build a repetition code circuit.
 
@@ -226,104 +225,107 @@ class SinisterSimulation:
         self.max_shots = max_shots
         self.max_errors = max_errors
 
-    def build_tasks(self) -> List[sinter.Task]:
+    def run_single(self, d: int, p: float) -> float:
         """
-        Generate simulation tasks for all parameter combinations.
+        Execute a single logical error rate simulation.
 
-        # TODO:
-        Check if correct circuit paramters are used
-
-        Returns
-        -------
-        List[sinter.Task]
-            List of tasks covering all (distance, noise) pairs.
-        """
-        return [
-            sinter.Task(
-                circuit=self.circuit_builder.build_circuit(
-                    distance=d,
-                    noise={"X_ERROR": p, "Z_ERROR": p},
-                ),
-                json_metadata={"d": d, "p": p},
-            )
-            for d in self.distances
-            for p in self.noise_values
-        ]
-
-    def run(self) -> List[sinter.TaskStats]:
-        """
-        Execute all simulation tasks.
-
-        Simulations are run using Sinter with PyMatching as the decoder.
-        Execution stops early if `max_shots` or `max_errors` is reached.
-
-        Returns
-        -------
-        List[sinter.TaskStats]
-            Collected statistics for each task.
-        """
-        tasks = self.build_tasks()
-
-        collected_stats = sinter.collect(
-            num_workers=self.num_workers,
-            tasks=tasks,
-            decoders=["pymatching"],
-            max_shots=self.max_shots,
-            max_errors=self.max_errors,
-        )
-
-        return collected_stats
-
-    def plot(self, collected_stats, theory_vals=None, title: str = "QEC-Code"):
-        """
-        Plot logical error rates as a function of physical error rates.
+        A circuit is constructed for the specified code distance and
+        physical error rate, simulated for `max_shots` samples, and
+        decoded using PyMatching. The logical error rate (LER) is
+        computed as the fraction of shots resulting in a logical failure.
 
         Parameters
         ----------
-        collected_stats : List[sinter.TaskStats]
-            Simulation results to visualize.
-        theory_vals : callable, optional
-            Function of the form f(p, d) -> float returning theoretical
-            logical error rates for a given physical error rate `p`
-            and code distance `d`. If provided, theoretical curves
-            are overlaid on the plot.
-        title : str, optional
-            Base title of the plot. The suffix "Error Rates" is appended.
+        d : int
+            Code distance.
+        p : float
+            Physical error probability.
 
-        Notes
-        -----
-        The plot is displayed on a log-log scale and includes one curve
-        per code distance. Simulation results are shown as solid lines,
-        while theoretical predictions (if provided) are shown as dashed lines.
+        Returns
+        -------
+        float
+            Estimated logical error rate per shot.
         """
-        fig, ax = plt.subplots(1, 1)
-
-        sinter.plot_error_rate(
-            ax=ax,
-            stats=collected_stats,
-            x_func=lambda stats: stats.json_metadata["p"],
-            group_func=lambda stats: stats.json_metadata["d"],
+        num_errors = count_logical_errors(
+            circuit=self.circuit_builder.build_circuit(d, {"X_ERROR": p}),
+            num_shots=self.max_shots,
         )
 
+        return num_errors / self.max_shots
+
+    def run(self) -> np.ndarray:
+        """
+        Execute simulations for all distance and noise combinations.
+
+        Logical error rates are estimated for every pair of code
+        distance and physical error probability defined by
+        `self.distances` and `self.noise_values`.
+
+        Returns
+        -------
+        np.ndarray
+            Two-dimensional array of logical error rates with shape
+
+                (len(self.distances), len(self.noise_values))
+
+            where rows correspond to code distances and columns
+            correspond to physical error probabilities.
+        """
+        return np.array([
+            [self.run_single(d, p) for p in self.noise_values]
+            for d in self.distances
+        ])
+
+    def plot(self, ler, theory_vals=None, title="QEC-Code"):
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        for i, d in enumerate(self.distances):
+            ax.plot(
+                self.noise_values,
+                ler[i],
+                marker="o",
+                linewidth=2,
+                label=f"d={d}",
+            )
+
         if theory_vals is not None:
-            ps = np.linspace(min(self.noise_values), max(self.noise_values), 300)
+            ps = np.geomspace(
+                min(self.noise_values),
+                max(self.noise_values),
+                300
+            )
 
             for d in self.distances:
                 ax.plot(
                     ps,
                     [theory_vals(p, d) for p in ps],
-                    linestyle="--",
+                    "--",
+                    alpha=0.7,
                     label=f"d={d} theory",
                 )
 
-        ax.set_ylim(1e-4, 1e-0)
-        ax.set_xlim(min(self.noise_values), max(self.noise_values))
-        ax.loglog()
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+
+        ax.set_xlim(
+            min(self.noise_values),
+            max(self.noise_values),
+        )
+
+        ax.set_ylim(
+            max(np.min(ler[ler > 0]) / 2, 1e-6),
+            1,
+        )
+
         ax.set_title(f"{title} Error Rates")
         ax.set_xlabel("Physical Error Rate")
         ax.set_ylabel("Logical Error Rate per Shot")
+
         ax.grid(which="major")
-        ax.grid(which="minor")
+        ax.grid(which="minor", alpha=0.3)
+
         ax.legend()
         fig.set_dpi(120)
+
+        plt.tight_layout()
         plt.show()
