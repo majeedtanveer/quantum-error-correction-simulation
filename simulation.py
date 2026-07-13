@@ -1,12 +1,87 @@
 import stim, pymatching
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import numpy as np
 import matplotlib.pyplot as plt
 from math import comb
 from typing import List, Iterable
 
+from StimCircuits.stimcircuits.surface_code import generate_circuit
 
-def count_logical_errors(circuit: stim.Circuit, num_shots: int) -> int:
+
+@dataclass(frozen=True)
+class LogicalErrorSample:
+    num_errors: int
+    predictions: np.ndarray
+    detection_events: np.ndarray
+    observable_flips: np.ndarray
+    weights: np.ndarray | None = None
+
+
+def sample_logical_errors(
+    circuit: stim.Circuit,
+    num_shots: int,
+    return_weights: bool = False,
+) -> LogicalErrorSample:
+    """
+    Sample and decode a quantum circuit.
+
+    The circuit is sampled `num_shots` times. Detection events are decoded
+    using a minimum-weight perfect matching decoder (PyMatching), and the
+    predicted logical observables are compared to the true outcomes.
+
+    Parameters
+    ----------
+    circuit : stim.Circuit
+        The quantum circuit to simulate.
+    num_shots : int
+        Number of independent samples (shots) to run.
+
+    Returns a structured result containing the raw detector samples,
+    observable flips, decoder predictions, optional decoder weights, and
+    the total logical error count.
+    """
+    sampler = circuit.compile_detector_sampler()
+    detection_events, observable_flips = sampler.sample(
+        num_shots, separate_observables=True
+    )
+
+    detector_error_model = circuit.detector_error_model(decompose_errors=True)
+    matcher = pymatching.Matching.from_detector_error_model(detector_error_model)
+
+    decode_result = matcher.decode_batch(
+        detection_events,
+        return_weights=return_weights,
+    )
+
+    if return_weights:
+        predictions, weights = decode_result
+    else:
+        predictions = decode_result
+        weights = None
+
+    num_errors = 0
+
+    for shot in range(num_shots):
+        actual_for_shot = observable_flips[shot]
+        predicted_for_shot = predictions[shot]
+        if not np.array_equal(actual_for_shot, predicted_for_shot):
+            num_errors += 1
+
+    return LogicalErrorSample(
+        num_errors=num_errors,
+        predictions=predictions,
+        detection_events=detection_events,
+        observable_flips=observable_flips,
+        weights=weights,
+    )
+
+
+def count_logical_errors(
+    circuit: stim.Circuit,
+    num_shots: int,
+    return_weights: bool = False,
+) -> int | tuple[int, np.ndarray]:
     """
     Estimate the number of logical errors produced by a quantum circuit.
 
@@ -26,25 +101,19 @@ def count_logical_errors(circuit: stim.Circuit, num_shots: int) -> int:
     int
         The number of shots for which the decoded logical observable
         differs from the actual observable.
+
+    If `return_weights` is True, also returns the per-shot decoder weights
+    produced by PyMatching.
     """
-    sampler = circuit.compile_detector_sampler()
-    detection_events, observable_flips = sampler.sample(
-        num_shots, separate_observables=True
+    sample = sample_logical_errors(
+        circuit=circuit,
+        num_shots=num_shots,
+        return_weights=return_weights,
     )
 
-    detector_error_model = circuit.detector_error_model(decompose_errors=True)
-    matcher = pymatching.Matching.from_detector_error_model(detector_error_model)
-
-    predictions = matcher.decode_batch(detection_events)
-
-    num_errors = 0
-    for shot in range(num_shots):
-        actual_for_shot = observable_flips[shot]
-        predicted_for_shot = predictions[shot]
-        if not np.array_equal(actual_for_shot, predicted_for_shot):
-            num_errors += 1
-
-    return num_errors
+    if return_weights:
+        return sample.num_errors, sample.weights
+    return sample.num_errors
 
 def repetition_theory(p: float, d: int) -> float:
     """
@@ -181,6 +250,34 @@ class RepetitionCodeBuilder(CircuitBuilder):
 
         return circuit
 
+class SurfaceCodeBuilder(CircuitBuilder):
+    def build_circuit(
+        self,
+        distance=3,
+        noise=0,
+        logical_one=False,
+        code_task="surface_code:rotated_memory_x",
+        rounds=1,
+    ):
+   
+        noise_model = {"after_clifford_depolarization": noise,
+                        "before_round_data_depolarization": noise,
+                        "before_measure_flip_probability": noise,
+                        "after_reset_flip_probability": noise}
+
+        return generate_circuit(
+            code_task=code_task,
+            rounds=rounds,
+            distance=distance,
+            after_clifford_depolarization=noise_model.get(
+                "after_clifford_depolarization"),
+            before_round_data_depolarization=noise_model.get(
+                "before_round_data_depolarization"),
+            before_measure_flip_probability=noise_model.get(
+                "before_measure_flip_probability"),
+            after_reset_flip_probability=noise_model.get(
+                "after_reset_flip_probability"),
+        )
 
 class SinisterSimulation:
     """
@@ -239,15 +336,17 @@ class SinisterSimulation:
         d : int
             Code distance.
         p : float
-            Physical error probability.
+            Physical error rate.
 
         Returns
         -------
         float
             Estimated logical error rate per shot.
         """
+
+
         num_errors = count_logical_errors(
-            circuit=self.circuit_builder.build_circuit(d, {"X_ERROR": p}),
+            circuit=self.circuit_builder.build_circuit(d, p),
             num_shots=self.max_shots,
         )
 
